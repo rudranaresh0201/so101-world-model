@@ -45,12 +45,13 @@ TARGET_ABOVE_BOX = 0.05 # target = box centre + 5 cm up = 2 cm above the box's t
 class SO101ReachEnv(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 20}
 
-    def __init__(self, render_mode=None):
+    def __init__(self, render_mode=None, terminate_on_knock=True):
         # ---- given: load the robot, nothing to do here ----
         self.model = mujoco.MjModel.from_xml_path(str(SCENE))
         self.data = mujoco.MjData(self.model)
         self.render_mode = render_mode
         self._renderer = None
+        self.terminate_on_knock = terminate_on_knock
 
         self.ctrl_low = self.model.actuator_ctrlrange[:, 0].copy()   # per-joint min target (rad)
         self.ctrl_high = self.model.actuator_ctrlrange[:, 1].copy()  # per-joint max target (rad)
@@ -136,7 +137,7 @@ class SO101ReachEnv(gym.Env):
         success = distance < SUCCESS_DIST
         sideways_drift = np.linalg.norm(self.box_pos()[:2] - self.box_start[:2])   # x, y only
         knocked = sideways_drift > KNOCK_DIST
-        terminated = knocked   # success must NOT end the episode (see docstring)
+        terminated = knocked and self.terminate_on_knock   # success must NOT end the episode
         truncated = self.steps >= MAX_STEPS
 
         info = {"distance": distance, "is_success": success, "knocked": knocked}
