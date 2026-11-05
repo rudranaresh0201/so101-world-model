@@ -59,11 +59,15 @@ class SO101ReachEnv(gym.Env):
 
     # ------------------------------------------------------------------ TODO 1
     def _get_obs(self) -> np.ndarray:
-        """Return the 21-number observation, in this order:
-        joint angles (data.qpos[:6]), joint speeds (data.qvel[:6]),
-        claw xyz, box xyz, box - claw.
-        Hint: np.concatenate([...])"""
-        raise NotImplementedError("TODO 1: build the observation")
+        """The 21 numbers the policy sees."""
+        claw, box = self.claw_pos(), self.box_pos()
+        return np.concatenate([
+            self.data.qpos[:6],   # 6 joint angles (rad): where the arm IS
+            self.data.qvel[:6],   # 6 joint speeds (rad/s): where it's GOING
+            claw,                 # claw tip xyz (m)
+            box,                  # box centre xyz (m)
+            box - claw,           # the arrow from claw to box: "which way is warmer"
+        ])
 
     # ------------------------------------------------------------------ TODO 2
     def reset(self, seed=None, options=None):
@@ -73,13 +77,16 @@ class SO101ReachEnv(gym.Env):
         # TODO 2a: put the box at a random (x, y) inside BOX_X_RANGE / BOX_Y_RANGE, at height BOX_Z.
         #          Write into self.data.qpos[self.box_qpos_adr : self.box_qpos_adr + 3]
         #          Use self.np_random.uniform(low, high)  (NOT np.random -- seeds must work)
-        raise NotImplementedError("TODO 2a: randomise the box position")
+        x = self.np_random.uniform(*BOX_X_RANGE)
+        y = self.np_random.uniform(*BOX_Y_RANGE)
+        self.data.qpos[self.box_qpos_adr:self.box_qpos_adr + 3] = [x, y, BOX_Z]
 
         self.data.ctrl[:] = 0.0                      # motor targets = home pose
         mujoco.mj_forward(self.model, self.data)     # recompute positions after we moved things
 
         # TODO 2b: remember where the box started (self.box_start) and reset the step counter
-        raise NotImplementedError("TODO 2b: box_start + step counter")
+        self.box_start = self.box_pos()
+        self.steps = 0
 
         return self._get_obs(), {}
 
@@ -89,23 +96,29 @@ class SO101ReachEnv(gym.Env):
 
         # TODO 3a: DELTA action. New target = current target (self.data.ctrl) + MAX_DELTA * action,
         #          clipped to [self.ctrl_low, self.ctrl_high]. Write it back into self.data.ctrl.
-        raise NotImplementedError("TODO 3a: apply the delta action")
+        target = self.data.ctrl + MAX_DELTA * action
+        self.data.ctrl[:] = np.clip(target, self.ctrl_low, self.ctrl_high)
 
         # TODO 3b: run FRAME_SKIP physics steps:  mujoco.mj_step(self.model, self.data)
-        raise NotImplementedError("TODO 3b: simulate")
+        for _ in range(FRAME_SKIP):
+            mujoco.mj_step(self.model, self.data)
 
         self.steps += 1
         distance = float(np.linalg.norm(self.claw_pos() - self.box_pos()))
 
         # TODO 3c: reward = 1 - tanh(5 * distance)
-        reward = None
+        reward = 1.0 - np.tanh(5.0 * distance)
 
         # TODO 3d: the two endings
         #   success = distance < SUCCESS_DIST
         #   knocked = the box moved more than KNOCK_DIST *sideways* (x, y only) from self.box_start
         #   terminated = success or knocked
         #   truncated  = time limit reached
-        success = knocked = terminated = truncated = None
+        success = distance < SUCCESS_DIST
+        sideways_drift = np.linalg.norm(self.box_pos()[:2] - self.box_start[:2])   # x, y only
+        knocked = sideways_drift > KNOCK_DIST
+        terminated = success or knocked
+        truncated = self.steps >= MAX_STEPS
 
         info = {"distance": distance, "is_success": success, "knocked": knocked}
         return self._get_obs(), float(reward), bool(terminated), bool(truncated), info
