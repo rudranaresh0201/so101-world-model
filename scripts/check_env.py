@@ -44,7 +44,7 @@ def t_obs():
     claw, box, diff = obs[12:15], obs[15:18], obs[18:21]
     assert np.allclose(claw, env.claw_pos()), "obs[12:15] should be the claw position"
     assert np.allclose(box, env.box_pos()), "obs[15:18] should be the box position"
-    assert np.allclose(diff, box - claw), "obs[18:21] should be box - claw (not claw - box!)"
+    assert np.allclose(diff, env.target_pos() - claw), "obs[18:21] should be target - claw (not claw - target!)"
 
 
 def t_random_box():

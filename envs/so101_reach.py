@@ -1,10 +1,13 @@
 """SO-101 REACH environment: the claw must touch the box. YOU fill in the TODOs.
 
 Everything we designed (PLAN.md / chat, "lock-in check"):
-  observation : 6 joint angles + 6 joint speeds + claw xyz + box xyz + (box - claw)  = 21 numbers
+  target      : a PRE-GRASP point 2 cm above the box's top face (box centre + 5 cm in z).
+                (Run 1 targeted the box CENTRE -- unreachable from outside a 4x4x6 cm box,
+                 so the policy learned to hover. See notes/02-run1-postmortem.md)
+  observation : 6 joint angles + 6 joint speeds + claw xyz + box xyz + (target - claw)  = 21 numbers
   action      : 6 numbers in [-1, 1] = DELTA joint targets, at most +-0.05 rad per step
   control     : one decision every 0.05 s = hold each action for 10 physics steps
-  reward      : 1 - tanh(5 * distance)        (always >= 0, so ending early never pays)
+  reward      : 1 - tanh(5 * distance to target)   (always >= 0, so ending early never pays)
   terminated  : success (distance < 0.02 m) OR box knocked > 0.05 m sideways from where it started
   truncated   : 100 decisions reached (time limit)
   reset       : arm at home, box at a RANDOM spot within reach: x in [0.15, 0.30], y in [-0.12, 0.12]
@@ -27,6 +30,7 @@ KNOCK_DIST = 0.05       # m
 BOX_X_RANGE = (0.15, 0.30)
 BOX_Y_RANGE = (-0.12, 0.12)
 BOX_Z = 0.03            # the box is 6 cm tall, so its centre rests at z = 0.03
+TARGET_ABOVE_BOX = 0.05 # target = box centre + 5 cm up = 2 cm above the box's top face
 
 
 class SO101ReachEnv(gym.Env):
@@ -57,16 +61,19 @@ class SO101ReachEnv(gym.Env):
     def box_pos(self) -> np.ndarray:
         return self.data.body("box").xpos.copy()
 
+    def target_pos(self) -> np.ndarray:
+        return self.box_pos() + np.array([0.0, 0.0, TARGET_ABOVE_BOX])
+
     # ------------------------------------------------------------------ TODO 1
     def _get_obs(self) -> np.ndarray:
         """The 21 numbers the policy sees."""
-        claw, box = self.claw_pos(), self.box_pos()
+        claw, box, target = self.claw_pos(), self.box_pos(), self.target_pos()
         return np.concatenate([
             self.data.qpos[:6],   # 6 joint angles (rad): where the arm IS
             self.data.qvel[:6],   # 6 joint speeds (rad/s): where it's GOING
             claw,                 # claw tip xyz (m)
             box,                  # box centre xyz (m)
-            box - claw,           # the arrow from claw to box: "which way is warmer"
+            target - claw,        # the arrow from claw to target: "which way is warmer"
         ])
 
     # ------------------------------------------------------------------ TODO 2
@@ -104,7 +111,7 @@ class SO101ReachEnv(gym.Env):
             mujoco.mj_step(self.model, self.data)
 
         self.steps += 1
-        distance = float(np.linalg.norm(self.claw_pos() - self.box_pos()))
+        distance = float(np.linalg.norm(self.claw_pos() - self.target_pos()))
 
         # TODO 3c: reward = 1 - tanh(5 * distance)
         reward = 1.0 - np.tanh(5.0 * distance)
