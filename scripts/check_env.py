@@ -39,7 +39,7 @@ def t_reset():
 
 def t_obs():
     obs = state["obs"]
-    assert obs.shape == (21,), f"observation should have 21 numbers, got shape {obs.shape}"
+    assert obs.shape == (27,), f"observation should have 27 numbers, got shape {obs.shape}"
     assert np.all(np.isfinite(obs)), "observation contains NaN/inf"
     claw, box, diff = obs[12:15], obs[15:18], obs[18:21]
     assert np.allclose(claw, env.claw_pos()), "obs[12:15] should be the claw position"

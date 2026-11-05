@@ -4,8 +4,12 @@ Everything we designed (PLAN.md / chat, "lock-in check"):
   target      : a PRE-GRASP point 2 cm above the box's top face (box centre + 5 cm in z).
                 (Run 1 targeted the box CENTRE -- unreachable from outside a 4x4x6 cm box,
                  so the policy learned to hover. See notes/02-run1-postmortem.md)
-  observation : 6 joint angles + 6 joint speeds + claw xyz + box xyz + (target - claw)  = 21 numbers
-  action      : 6 numbers in [-1, 1] = DELTA joint targets, at most +-0.05 rad per step
+  observation : 6 joint angles + 6 joint speeds + claw xyz + box xyz + (target - claw)
+                + 6 motor TARGETS (data.ctrl)  = 27 numbers
+                (Run 2: targets were hidden and wound up to 1.46 rad ahead of the weak motors,
+                 so the env wasn't Markov. See notes/03-run2-postmortem.md)
+  action      : 6 numbers in [-1, 1] = DELTA joint targets, at most +-0.05 rad per step,
+                and a target may never lead the actual joint angle by more than MAX_LEAD rad
   control     : one decision every 0.05 s = hold each action for 10 physics steps
   reward      : 1 - tanh(5 * distance to target)   (always >= 0, so ending early never pays)
   terminated  : success (distance < 0.02 m) OR box knocked > 0.05 m sideways from where it started
@@ -23,6 +27,7 @@ import numpy as np
 SCENE = Path(__file__).resolve().parents[1] / "third_party/mujoco_menagerie/robotstudio_so101/scene_box.xml"
 
 MAX_DELTA = 0.05        # rad: biggest joint-target change one action can make
+MAX_LEAD = 0.15         # rad: how far a target may run ahead of the real joint (anti wind-up)
 FRAME_SKIP = 10         # physics steps per decision (10 x 0.005 s = 0.05 s)
 MAX_STEPS = 100         # decisions per episode (= 5 seconds)
 SUCCESS_DIST = 0.02     # m
@@ -49,7 +54,7 @@ class SO101ReachEnv(gym.Env):
         self.box_qpos_adr = self.model.joint(self.model.body("box").jntadr[0]).qposadr[0]
 
         self.action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32)
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(21,), dtype=np.float64)
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(27,), dtype=np.float64)
 
         self.steps = 0
         self.box_start = np.zeros(3)
@@ -66,7 +71,7 @@ class SO101ReachEnv(gym.Env):
 
     # ------------------------------------------------------------------ TODO 1
     def _get_obs(self) -> np.ndarray:
-        """The 21 numbers the policy sees."""
+        """The 27 numbers the policy sees."""
         claw, box, target = self.claw_pos(), self.box_pos(), self.target_pos()
         return np.concatenate([
             self.data.qpos[:6],   # 6 joint angles (rad): where the arm IS
@@ -74,6 +79,7 @@ class SO101ReachEnv(gym.Env):
             claw,                 # claw tip xyz (m)
             box,                  # box centre xyz (m)
             target - claw,        # the arrow from claw to target: "which way is warmer"
+            self.data.ctrl,       # 6 motor targets: the part of the state the policy itself controls
         ])
 
     # ------------------------------------------------------------------ TODO 2
@@ -104,7 +110,9 @@ class SO101ReachEnv(gym.Env):
         # TODO 3a: DELTA action. New target = current target (self.data.ctrl) + MAX_DELTA * action,
         #          clipped to [self.ctrl_low, self.ctrl_high]. Write it back into self.data.ctrl.
         target = self.data.ctrl + MAX_DELTA * action
-        self.data.ctrl[:] = np.clip(target, self.ctrl_low, self.ctrl_high)
+        q = self.data.qpos[:6]
+        target = np.clip(target, q - MAX_LEAD, q + MAX_LEAD)               # no wind-up
+        self.data.ctrl[:] = np.clip(target, self.ctrl_low, self.ctrl_high)  # joint limits
 
         # TODO 3b: run FRAME_SKIP physics steps:  mujoco.mj_step(self.model, self.data)
         for _ in range(FRAME_SKIP):
