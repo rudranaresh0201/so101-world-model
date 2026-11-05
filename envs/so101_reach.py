@@ -12,7 +12,11 @@ Everything we designed (PLAN.md / chat, "lock-in check"):
                 and a target may never lead the actual joint angle by more than MAX_LEAD rad
   control     : one decision every 0.05 s = hold each action for 10 physics steps
   reward      : 1 - tanh(5 * distance to target)   (always >= 0, so ending early never pays)
-  terminated  : success (distance < 0.02 m) OR box knocked > 0.05 m sideways from where it started
+  terminated  : box knocked > 0.05 m sideways from where it started (failure only)
+  success     : distance < 0.02 m -- reported in info, does NOT end the episode.
+                (Runs 1-3 ended on success. With an always-positive reward that made succeeding
+                 cost the rest of the episode's reward, so the policy learned to hover.
+                 See notes/04-run3-postmortem.md)
   truncated   : 100 decisions reached (time limit)
   reset       : arm at home, box at a RANDOM spot within reach: x in [0.15, 0.30], y in [-0.12, 0.12]
 
@@ -132,7 +136,7 @@ class SO101ReachEnv(gym.Env):
         success = distance < SUCCESS_DIST
         sideways_drift = np.linalg.norm(self.box_pos()[:2] - self.box_start[:2])   # x, y only
         knocked = sideways_drift > KNOCK_DIST
-        terminated = success or knocked
+        terminated = knocked   # success must NOT end the episode (see docstring)
         truncated = self.steps >= MAX_STEPS
 
         info = {"distance": distance, "is_success": success, "knocked": knocked}
