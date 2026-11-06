@@ -15,7 +15,8 @@ action (6)      : delta joint targets incl. the gripper, same as reach
 reward          : staged, each stage only pays once the previous is reached
     r = reach                       1 - tanh(5 * |grasp_point - claw|)          in [0, 1]
       + 0.5 * down                  how much the fingers point down             in [0, 0.5]
-      + grasped * (1 + 3 * lift)    both jaws on the box, then height gained    in [0, 4]
+      + grasped * (0.5 + 6 * lift)  both jaws on AND squeezing, then height     in [0, 6.5]
+  v1 paid grasped*(1 + 3*lift) for mere contact -> policy rested its jaws on the box and sat (notes/08)
   'grasped *' blocks the cheat of earning lift reward by flicking/pushing the box up.
 success         : grasped AND box lifted >= 5 cm
 """
@@ -29,6 +30,7 @@ MAX_STEPS = 150          # 7.5 s: reach + align + close + lift needs longer than
 GRASP_ABOVE_CENTRE = 0.01
 LIFT_FULL = 0.08         # lift reward saturates at 8 cm
 SUCCESS_LIFT = 0.05
+SQUEEZE_MIN = 0.05       # rad: v1 counted jaws merely RESTING on the box as a grasp (notes/08)
 
 
 class SO101PickEnv(SO101ReachEnv):
@@ -79,10 +81,11 @@ class SO101PickEnv(SO101ReachEnv):
         reach = 1.0 - np.tanh(5.0 * dist)
         down = max(0.0, -R[2, 0])                      # finger axis . (0,0,-1)
         fixed, moving = self.jaw_contacts()
-        grasped = fixed and moving
+        squeeze = self.data.qpos[5] - self.data.ctrl[5]   # >0: motor target more closed than the jaw -> force on the box
+        grasped = fixed and moving and squeeze > SQUEEZE_MIN
         height = self.box_pos()[2] - BOX_Z
         lift = float(np.clip(height / LIFT_FULL, 0.0, 1.0))
-        reward = reach + 0.5 * down + grasped * (1.0 + 3.0 * lift)
+        reward = reach + 0.5 * down + grasped * (0.5 + 6.0 * lift)
         info = {"distance": dist, "down": down, "grasped": grasped, "height": height,
                 "is_success": bool(grasped and height >= SUCCESS_LIFT), "knocked": False}
         return float(reward), info

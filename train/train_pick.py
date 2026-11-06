@@ -40,11 +40,16 @@ if __name__ == "__main__":
     ap.add_argument("--name", required=True)
     ap.add_argument("--steps", type=int, default=600_000)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--init", help="warm-start from outputs/<init>.zip + its vecnorm stats")
     args = ap.parse_args()
     print(vars(args), flush=True)
     venv = vecnorm = VecNormalize(DummyVecEnv([lambda: Monitor(SO101PickEnv())]), norm_obs=True, norm_reward=False)
     report("random policy", evaluate(None, vecnorm))
-    model = SAC("MlpPolicy", venv, seed=args.seed, verbose=0, tensorboard_log=str(ROOT / "outputs/tb"))
+    if args.init:
+        venv = vecnorm = VecNormalize.load(str(ROOT / f"outputs/{args.init}_vecnorm.pkl"), venv.venv)
+        model = SAC.load(ROOT / f"outputs/{args.init}", env=venv, seed=args.seed, tensorboard_log=str(ROOT / "outputs/tb"))
+    else:
+        model = SAC("MlpPolicy", venv, seed=args.seed, verbose=0, tensorboard_log=str(ROOT / "outputs/tb"))
     t0, chunk = time.time(), 25_000
     for done_steps in range(chunk, args.steps + 1, chunk):
         model.learn(chunk, reset_num_timesteps=False, tb_log_name=args.name)
